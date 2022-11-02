@@ -56,6 +56,8 @@ class Queue(queue.Queue):
 
     @property
     def name(self): return self.__name
+    def get(self): return super().get()
+    def put(self, queueable): super().put(queueable)
 
 
 class Abandon(Event): pass
@@ -110,9 +112,9 @@ class Stack(Subscriber):
     def __init__(self, *args, name=None, file, **kwargs):
         super().__init__(*args, events={Success: self.success, Failure: self.failure, Abandon: self.abandon}, **kwargs)
         self.__name = name if name is not None else self.__class__.__name__
-        self.__agenda = Queue([], name="agenda")
-        self.__success = Queue([], name="success")
-        self.__failure = Queue([], name="failure")
+        self.__agenda = Queue(name="agenda")
+        self.__success = Queue(name="success")
+        self.__failure = Queue(name="failure")
         self.__file = file
         self.__mutex = threading.Lock()
         try:

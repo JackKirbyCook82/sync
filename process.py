@@ -10,6 +10,7 @@ import os.path
 import logging
 import pandas as pd
 from abc import ABC, abstractmethod
+from collections import namedtuple as ntuple
 
 from files.dataframes import DataframeFile
 from utilities.dispatchers import kwargsdispatcher
@@ -69,16 +70,19 @@ class Process(Thread, ABC):
     def execute(self, *args, **kwargs): pass
 
 
+class Queueable(ntuple("Queueable", "query dataset")):
+    pass
+
+
 class Producer(Process, ABC, daemon=False):
     def process(self, *args, **kwargs):
         for query, dataset in self.execute(*args, **kwargs):
             queueable = Queueable(query, dataset)
-            self.queue.put(queueable)
             LOGGER.info("Produced: {}".format(repr(self)))
             LOGGER.info(str(queueable.query))
             LOGGER.info(str(queueable.dataset))
             self.report(queueable)
-        self.display()
+            self.queue.put(queueable)
 
 
 class Consumer(Process, ABC, daemon=True):
@@ -86,12 +90,12 @@ class Consumer(Process, ABC, daemon=True):
         while True:
             queueable = self.queue.get()
             assert isinstance(queueable, Queueable)
-            self.execute(queueable, *args, **kwargs)
+            query, dataset = queueable
             LOGGER.info("Consumed: {}".format(repr(self)))
             LOGGER.info(str(queueable.query))
             LOGGER.info(str(queueable.dataset))
             self.report(queueable)
-        self.display()
+            self.execute(query, dataset, *args, **kwargs)
 
 
 class Downloader(Producer, ABC): pass
@@ -109,8 +113,7 @@ class Loader(File, Producer):
                 parms = self.parameters(filename, *args, **kwargs)
                 data = self.load(filename, *args, data=filetype, **parms, **kwargs)
                 dataset[filename].append(data)
-                queueable = Queueable(query, dataset)
-                yield queueable
+                yield query, dataset
 
     @kwargsdispatcher("data")
     def load(self, filename, *args, data, **kwargs): raise TypeError(data.__name__)
@@ -128,9 +131,8 @@ class Loader(File, Producer):
 
 
 class Saver(File, Consumer):
-    def execute(self, queueable, *args, **kwargs):
-        assert isinstance(queueable, Queueable)
-        for filename, filedata in iter(queueable.dataset):
+    def execute(self, query, dataset, *args, **kwargs):
+        for filename, filedata in iter(dataset):
             parms = self.parameters(filename, *args, **kwargs)
             self.save(filename, *args, data=filedata, **parms, **kwargs)
 
