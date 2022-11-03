@@ -96,7 +96,7 @@ class Dataset(ODict, metaclass=DatasetMeta):
     def __str__(self): return "{}: {}".format(self.name, ", ".join(["{}[{:.0f}]".format(key, int(value)) for key, value in zip(self.keys(), self.sizes()) if bool(value)]))
     def __bool__(self): return any([bool(collection) for collection in super().values()])
 
-    def __iter__(self): return ((key, self.reductions[key](collection)) for key, collection in super().items())
+    def __iter__(self): return ((key, self.reductions[key](collection)) for key, collection in super().items() if bool(collection))
     def __contains__(self, key): return bool(super().__getitem__(key)) if key in super().keys() else False
     def __getitem__(self, key): return self.reductions[key](super().__getitem__(key)) if bool(super().__getitem__(key)) else None
 

@@ -33,7 +33,6 @@ class File(object):
         if not os.path.isdir(repository):
             os.mkdir(repository)
         self.__repository = repository
-        self.__index = self.__class__.__index__
 
     @property
     def repository(self): return self.__repository
@@ -78,9 +77,6 @@ class Producer(Process, ABC, daemon=False):
     def process(self, *args, **kwargs):
         for query, dataset in self.execute(*args, **kwargs):
             queueable = Queueable(query, dataset)
-            LOGGER.info("Produced: {}".format(repr(self)))
-            LOGGER.info(str(queueable.query))
-            LOGGER.info(str(queueable.dataset))
             self.report(queueable)
             self.queue.put(queueable)
 
@@ -91,9 +87,6 @@ class Consumer(Process, ABC, daemon=True):
             queueable = self.queue.get()
             assert isinstance(queueable, Queueable)
             query, dataset = queueable
-            LOGGER.info("Consumed: {}".format(repr(self)))
-            LOGGER.info(str(queueable.query))
-            LOGGER.info(str(queueable.dataset))
             self.report(queueable)
             self.execute(query, dataset, *args, **kwargs)
 
@@ -111,7 +104,8 @@ class Loader(File, Producer):
         for query, dataset in self.schedule(*args, **kwargs):
             for filename, filetype in dataset.fields():
                 parms = self.parameters(filename, *args, **kwargs)
-                data = self.load(filename, *args, data=filetype, **parms, **kwargs)
+                file, data = self.load(filename, *args, data=filetype, **parms, **kwargs)
+                LOGGER.info("FileLoaded: {}".format(str(file)))
                 dataset[filename].append(data)
                 yield query, dataset
 
@@ -122,7 +116,8 @@ class Loader(File, Producer):
     def dataframe(self, filename, *args, index=None, header=None, **kwargs):
         file = self.file(filename, "zip")
         with DataframeFile(*args, file=file, mode="r", **kwargs) as reader:
-            return reader(index=index, header=header)
+            dataframe = reader(index=index, header=header)
+            return file, dataframe
 
     @property
     def schedule(self): return self.__schedule
@@ -134,7 +129,8 @@ class Saver(File, Consumer):
     def execute(self, query, dataset, *args, **kwargs):
         for filename, filedata in iter(dataset):
             parms = self.parameters(filename, *args, **kwargs)
-            self.save(filename, *args, data=filedata, **parms, **kwargs)
+            file = self.save(filename, *args, data=filedata, **parms, **kwargs)
+            LOGGER.info("FileSaved: {}".format(str(file)))
 
     @kwargsdispatcher("data")
     def save(self, filename, *args, data, **kwargs): raise TypeError(type(data).__name__)
@@ -144,6 +140,6 @@ class Saver(File, Consumer):
         file = self.file(filename, "zip")
         with DataframeFile(*args, file=file, mode="a", **kwargs) as writer:
             writer(data, index=index, header=header)
-
+        return file
 
 
