@@ -70,6 +70,7 @@ class Thread(threading.Thread, ABC):
     def __call__(self, *arguments, **parameters):
         self.__arguments.extend(list(arguments))
         self.__parameters.update(dict(parameters))
+        return self
 
     def run(self):
         self.alive(True)

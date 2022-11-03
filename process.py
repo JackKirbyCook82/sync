@@ -15,11 +15,12 @@ from collections import namedtuple as ntuple
 from files.dataframes import DataframeFile
 from utilities.dispatchers import kwargsdispatcher
 
-from sync.thread import Thread
+import sync.thread
+import sync.queue
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["User", "Loader", "Saver", "Downloader"]
+__all__ = ["Queue", "Producer", "Pipeline", "Consumer", "Loader", "Saver"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -42,57 +43,79 @@ class File(object):
     def parameters(filename, *args, **kwargs): return {}
 
 
-class Process(Thread, ABC):
-    def __init__(self, *args, queue, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.__results = {}
-        self.__queue = queue
-
-    def report(self, queueable):
-        results = {key: value for key, value in self.results.items()}
-        results[queueable.query] = queueable.dataset.results() if queueable.query not in results else results[queueable.query] + queueable.dataset.results()
-        self.results = results
-
-    def display(self):
-        for query, results in self.results.items():
-            LOGGER.info(str(query))
-            LOGGER.info(str(results))
-
-    @property
-    def queue(self): return self.__queue
-    @property
-    def results(self): return self.__results
-    @results.setter
-    def results(self, results): self.__results = results
-
-    @abstractmethod
-    def execute(self, *args, **kwargs): pass
-
-
 class Queueable(ntuple("Queueable", "query dataset")):
     pass
 
 
+class Queue(sync.queue.Queue):
+    def put(self, query, dataset):
+        queueable = Queueable(query, dataset)
+        super().put(queueable)
+        LOGGER.info("Queued: {}".format(self.name))
+        LOGGER.info(str(query))
+        LOGGER.info(str(dataset.results()))
+
+    def get(self):
+        queueable = super().get()
+        assert isinstance(queueable, Queueable)
+        query, dataset = queueable
+        return query, dataset
+
+
+class Process(sync.thread.Thread, ABC):
+    @abstractmethod
+    def process(self, *args, **kwargs): pass
+    @abstractmethod
+    def execute(self, *args, **kwargs): pass
+
+
 class Producer(Process, ABC, daemon=False):
+    def __init__(self, *args, destination, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert isinstance(destination, Queue)
+        self.__destination = destination
+
     def process(self, *args, **kwargs):
         for query, dataset in self.execute(*args, **kwargs):
-            queueable = Queueable(query, dataset)
-            self.report(queueable)
-            self.queue.put(queueable)
+            self.destination.put(query, dataset)
+
+    @property
+    def destination(self): return self.__detination
+
+
+class Pipeline(Process, ABC, daemon=False):
+    def __init__(self, *args, source, destination, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert isinstance(source, Queue)
+        assert isinstance(destination, Queue)
+        self.__source = source
+        self.__destination = destination
+
+    def process(self, *args, **kwargs):
+        while True:
+            inQuery, inDataset = self.source.get()
+            for outQuery, outDataset in self.execute(inQuery, inDataset, *args, **kwargs):
+                self.destination.put(outQuery, outDataset)
+
+    @property
+    def source(self): return self.__source
+    @property
+    def destination(self): return self.__detination
 
 
 class Consumer(Process, ABC, daemon=True):
+    def __init__(self, *args, source, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert isinstance(source, Queue)
+        self.__source = source
+
     def process(self, *args, **kwargs):
         while True:
-            queueable = self.queue.get()
-            assert isinstance(queueable, Queueable)
-            query, dataset = queueable
-            self.report(queueable)
+            query, dataset = self.source.get()
             self.execute(query, dataset, *args, **kwargs)
 
-
-class Downloader(Producer, ABC): pass
-class User(Consumer, ABC): pass
+    @property
+    def source(self): return self.__source
 
 
 class Loader(File, Producer):

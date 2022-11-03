@@ -123,6 +123,7 @@ class Dataset(ODict, metaclass=DatasetMeta):
     def values(self): return tuple([reduction(values) if bool(values) else None for values, reduction in zip(super().values(), self.reductions.values())])
     def sizes(self): return tuple([len(reduction(values)) if bool(values) else 0 for values, reduction in zip(super().values(), self.reductions.values())])
     def items(self): return tuple([(key, reduction(values) if bool(values) else None) for (key, values), reduction in zip(super().items(), self.reductions.values())])
+    def todict(self): return ODict([(key, value) for key, value in self.items()])
     def results(self): return Results({key: size for key, size in zip(self.keys(), self.sizes())}, name=self.name)
 
 
