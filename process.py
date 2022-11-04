@@ -51,7 +51,7 @@ class Queue(sync.queue.Queue):
     def put(self, query, dataset):
         queueable = Queueable(query, dataset)
         super().put(queueable)
-        LOGGER.info("Queued: {}".format(self.name))
+        LOGGER.info("Queued: {}".format(repr(self)))
         LOGGER.info(str(query))
         LOGGER.info(str(dataset.results()))
 
@@ -80,7 +80,7 @@ class Producer(Process, ABC, daemon=False):
             self.destination.put(query, dataset)
 
     @property
-    def destination(self): return self.__detination
+    def destination(self): return self.__destination
 
 
 class Pipeline(Process, ABC, daemon=False):
@@ -100,7 +100,7 @@ class Pipeline(Process, ABC, daemon=False):
     @property
     def source(self): return self.__source
     @property
-    def destination(self): return self.__detination
+    def destination(self): return self.__destination
 
 
 class Consumer(Process, ABC, daemon=True):
