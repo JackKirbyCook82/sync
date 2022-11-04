@@ -36,7 +36,7 @@ class Queue(queue.Queue):
         for item in items:
             self.put(item)
 
-    def __repr__(self): return "{}|{}".format(self.name, str(len(self)))
+    def __repr__(self): return "{}[{}]".format(self.name, str(len(self)))
     def __bool__(self): return not bool(self.empty())
     def __len__(self): return int(self.qsize())
     def __iter__(self): return self
