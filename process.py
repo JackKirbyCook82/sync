@@ -1,26 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Oct 31 2022
-@name:   Process Objects
+Created on Fri Nov 26 2021
+@name:   Synchronization Process Objects
 @author: Jack Kirby Cook
 
 """
 
-import os.path
+import sys
 import logging
-import pandas as pd
+import threading
+import traceback
 from abc import ABC, abstractmethod
+from time import sleep as sleeper
 from collections import namedtuple as ntuple
 
-from files.dataframes import DataframeFile
-from utilities.dispatchers import kwargsdispatcher
-
-import sync.thread
-import sync.queue
+from sync.status import Status
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Queue", "Producer", "Pipeline", "Consumer", "Loader", "Saver"]
+__all__ = ["Process"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -28,141 +26,95 @@ __license__ = ""
 LOGGER = logging.getLogger(__name__)
 
 
-class File(object):
-    def __init__(self, *args, repository, **kwargs):
-        super().__init__(*args, **kwargs)
-        if not os.path.isdir(repository):
-            os.mkdir(repository)
-        self.__repository = repository
+_aslist = lambda items: list(items) if isinstance(items, (tuple, list, set)) else [items]
+_astuple = lambda items: tuple(items) if isinstance(items, (tuple, list, set)) else (items,)
+_filter = lambda items, by: [item for item in _aslist(items) if item is not by]
 
-    @property
-    def repository(self): return self.__repository
-    def file(self, name, ext): return os.path.join(self.repository, ".".join([name, ext]))
+
+class ControlProcess(Exception):
+    def __str__(self): return "{}|{}".format(self.__class__.__name__, repr(self.args[0]))
+    def __int__(self): return int(self.args[1])
+
+
+class ErrorTuple(ntuple("Error", "type value traceback")): pass
+class TerminateProcess(ControlProcess): pass
+
+
+class Process(threading.Thread, ABC):
+    def __init_subclass__(cls, *args, failure=None, failures=[], daemon=False, **kwargs):
+        assert all([issubclass(exception, BaseException) for exception in _filter(_aslist(failure) + _aslist(failures), None)])
+        assert isinstance(daemon, bool)
+        cls.failures = list(getattr(cls, "failures", []))
+        cls.failures = tuple(_filter(cls.failures + _aslist(failure) + _aslist(failures), None))
+        cls.daemon = daemon
+
+    def __init__(self, *args, name=None, **kwargs):
+        assert isinstance(name, str)
+        name = name if name is not None else self.__class__.__name__
+        daemon = self.__class__.daemon
+        threading.Thread.__init__(self, name=name, daemon=daemon)
+        self.__arguments = list()
+        self.__parameters = dict()
+        self.__alive = Status("Alive", False)
+        self.__dead = self.__alive.divergent("Dead")
+        self.__running = Status("Running", False)
+        self.__idle = self.__running.divergent("Idle")
+        self.__failures = tuple([exception for exception in self.__class__.failures])
+        self.__failure = None
+        self.__error = None
+        self.__traceback = None
+
+    def __repr__(self): return "{}".format(self.name)
+    def __bool__(self): return self.is_alive()
+
+    def __call__(self, *arguments, **parameters):
+        self.__arguments.extend(list(arguments))
+        self.__parameters.update(dict(parameters))
+        return self
+
+    def run(self):
+        self.alive(True)
+        try:
+            LOGGER.info("Started: {}".format(repr(self)))
+            self.running(True)
+            self.process(*self.__arguments, **self.__parameters)
+        except TerminateProcess:
+            LOGGER.warning("Terminated: {}".format(repr(self)))
+        except self.__failures as failure:
+            LOGGER.warning("Failure: {}|{}".format(repr(self), failure.__class__.__name__))
+            self.__failure = failure
+        except BaseException as error:
+            LOGGER.error("Error: {}|{}".format(repr(self), error.__class__.__name__))
+            error_type, error_value, error_traceback = sys.exc_info()
+            traceback.print_exception(error_type, error_value, error_traceback)
+            self.__error = ErrorTuple(error_type, error_value, error_traceback)
+        else:
+            LOGGER.info("Completed: {}".format(repr(self)))
+        finally:
+            LOGGER.info("Stopping: {}".format(repr(self)))
+            self.idle(True)
+        self.dead(True)
 
     @staticmethod
-    def parameters(filename, *args, **kwargs): return {}
+    def sleep(seconds): sleeper(seconds)
+    def terminate(self): raise TerminateProcess(self)
 
+    @property
+    def failure(self): return self.__failure
+    @property
+    def error(self): return self.__error
 
-class Queueable(ntuple("Queueable", "query dataset")):
-    pass
+    @property
+    def alive(self): return self.__alive
+    @property
+    def dead(self): return self.__dead
 
+    @property
+    def running(self): return self.__running
+    @property
+    def idle(self): return self.__idle
 
-class Queue(sync.queue.Queue):
-    def put(self, query, dataset):
-        queueable = Queueable(query, dataset)
-        super().put(queueable)
-        LOGGER.info("Queued: {}".format(repr(self)))
-        LOGGER.info(str(query))
-        LOGGER.info(str(dataset.results()))
-
-    def get(self):
-        queueable = super().get()
-        assert isinstance(queueable, Queueable)
-        query, dataset = queueable
-        return query, dataset
-
-
-class Process(sync.thread.Thread, ABC):
     @abstractmethod
     def process(self, *args, **kwargs): pass
-    @abstractmethod
-    def execute(self, *args, **kwargs): pass
-
-
-class Producer(Process, ABC, daemon=False):
-    def __init__(self, *args, destination, **kwargs):
-        super().__init__(*args, **kwargs)
-        assert isinstance(destination, Queue)
-        self.__destination = destination
-
-    def process(self, *args, **kwargs):
-        for query, dataset in self.execute(*args, **kwargs):
-            self.destination.put(query, dataset)
-
-    @property
-    def destination(self): return self.__destination
-
-
-class Pipeline(Process, ABC, daemon=False):
-    def __init__(self, *args, source, destination, **kwargs):
-        super().__init__(*args, **kwargs)
-        assert isinstance(source, Queue)
-        assert isinstance(destination, Queue)
-        self.__source = source
-        self.__destination = destination
-
-    def process(self, *args, **kwargs):
-        while True:
-            inQuery, inDataset = self.source.get()
-            for outQuery, outDataset in self.execute(inQuery, inDataset, *args, **kwargs):
-                self.destination.put(outQuery, outDataset)
-
-    @property
-    def source(self): return self.__source
-    @property
-    def destination(self): return self.__destination
-
-
-class Consumer(Process, ABC, daemon=True):
-    def __init__(self, *args, source, **kwargs):
-        super().__init__(*args, **kwargs)
-        assert isinstance(source, Queue)
-        self.__source = source
-
-    def process(self, *args, **kwargs):
-        while True:
-            query, dataset = self.source.get()
-            self.execute(query, dataset, *args, **kwargs)
-
-    @property
-    def source(self): return self.__source
-
-
-class Loader(File, Producer):
-    def __init__(self, *args, schedule, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.__schedule = schedule
-
-    def execute(self, *args, **kwargs):
-        for query, dataset in self.schedule(*args, **kwargs):
-            for filename, filetype in dataset.fields():
-                parms = self.parameters(filename, *args, **kwargs)
-                file, data = self.load(filename, *args, data=filetype, **parms, **kwargs)
-                LOGGER.info("FileLoaded: {}".format(str(file)))
-                dataset[filename].append(data)
-                yield query, dataset
-
-    @kwargsdispatcher("data")
-    def load(self, filename, *args, data, **kwargs): raise TypeError(data.__name__)
-
-    @load.register.value(pd.DataFrame)
-    def dataframe(self, filename, *args, index=None, header=None, **kwargs):
-        file = self.file(filename, "zip")
-        with DataframeFile(*args, file=file, mode="r", **kwargs) as reader:
-            dataframe = reader(index=index, header=header)
-            return file, dataframe
-
-    @property
-    def schedule(self): return self.__schedule
-    @schedule.setter
-    def schedule(self, schedule): self.__schedule = schedule
-
-
-class Saver(File, Consumer):
-    def execute(self, query, dataset, *args, **kwargs):
-        for filename, filedata in iter(dataset):
-            parms = self.parameters(filename, *args, **kwargs)
-            file = self.save(filename, *args, data=filedata, **parms, **kwargs)
-            LOGGER.info("FileSaved: {}".format(str(file)))
-
-    @kwargsdispatcher("data")
-    def save(self, filename, *args, data, **kwargs): raise TypeError(type(data).__name__)
-
-    @save.register.type(pd.DataFrame)
-    def dataframe(self, filename, *args, data, index=False, header=None, **kwargs):
-        file = self.file(filename, "zip")
-        with DataframeFile(*args, file=file, mode="a", **kwargs) as writer:
-            writer(data, index=index, header=header)
-        return file
 
 

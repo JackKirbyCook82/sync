@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Nov 26 2021
-@name:   Status Objects
+@name:   Synchronization Status Objects
 @author: Jack Kirby Cook
 
 """

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Nov 26 2021
-@name:   Synchronization Objects
+@name:   Synchronization Queue Objects
 @author: Jack Kirby Cook
 
 """
