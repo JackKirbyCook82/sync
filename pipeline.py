@@ -6,21 +6,23 @@ Created on Mon Oct 31 2022
 
 """
 
+import types
 import os.path
 import logging
+import queue
 import pandas as pd
 from abc import ABC, abstractmethod
-from collections import namedtuple as ntuple
 
 from files.dataframes import DataframeFile
 from utilities.dispatchers import kwargsdispatcher
 
-import sync.process
-import sync.queue
+from sync.status import Status
+from sync.process import Process
+from sync.queues import Queue
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Queue", "Producer", "Pipeline", "Consumer", "Loader", "Saver"]
+__all__ = ["Cache", "Producer", "ConsumerProducer", "Consumer", "Loader", "Saver"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -43,79 +45,106 @@ class File(object):
     def parameters(filename, *args, **kwargs): return {}
 
 
-class Queueable(ntuple("Queueable", "query dataset")):
-    pass
+class Cache(Queue):
+    def __init__(self, *args, timeout=60, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__open = Status("Open", True)
+        self.__closed = self.__open.divergent("Closed")
+        self.__timeout = int(timeout)
 
-
-class Queue(sync.queue.Queue):
     def put(self, query, dataset):
-        queueable = Queueable(query, dataset)
-        super().put(queueable)
+        content = (query, dataset)
+        super().put(content, timeout=self.timeout)
         LOGGER.info("Queued: {}".format(repr(self)))
         LOGGER.info(str(query))
         LOGGER.info(str(dataset.results()))
 
     def get(self):
-        queueable = super().get()
-        assert isinstance(queueable, Queueable)
-        query, dataset = queueable
+        content = super().get(timeout=self.timeout)
+        query, dataset = content
         return query, dataset
 
-
-class Process(sync.process.Process, ABC):
-    @abstractmethod
-    def process(self, *args, **kwargs): pass
-    @abstractmethod
-    def execute(self, *args, **kwargs): pass
+    @property
+    def open(self): return self.__open
+    @property
+    def closed(self): return self.__closed
+    @property
+    def timeout(self): return self.__timeout
 
 
 class Producer(Process, ABC, daemon=False):
     def __init__(self, *args, destination, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(destination, Queue)
+        assert isinstance(destination, Cache)
         self.__destination = destination
 
     def process(self, *args, **kwargs):
-        for query, dataset in self.execute(*args, **kwargs):
-            self.destination.put(query, dataset)
+        try:
+            generator = self.execute(*args, **kwargs)
+            assert isinstance(generator, types.GeneratorType)
+            for query, dataset in iter(generator):
+                self.destination.put(query, dataset)
+        except Exception as error:
+            self.destination.closed(True)
+            raise error
+        self.destination.closed(True)
 
     @property
     def destination(self): return self.__destination
+    @abstractmethod
+    def execute(self, *args, **kwargs): pass
 
 
-class Pipeline(Process, ABC, daemon=False):
+class ConsumerProducer(Process, ABC, daemon=False):
     def __init__(self, *args, source, destination, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(source, Queue)
-        assert isinstance(destination, Queue)
+        assert isinstance(source, Cache)
+        assert isinstance(destination, Cache)
         self.__source = source
         self.__destination = destination
 
     def process(self, *args, **kwargs):
-        while True:
-            inQuery, inDataset = self.source.get()
-            for outQuery, outDataset in self.execute(inQuery, inDataset, *args, **kwargs):
-                self.destination.put(outQuery, outDataset)
+        try:
+            while bool(self.source.open):
+                try:
+                    query, dataset = self.source.get()
+                except queue.Empty:
+                    continue
+                generator = self.execute(query, dataset, *args, **kwargs)
+                assert isinstance(generator, types.GeneratorType)
+                for query, dataset in iter(generator):
+                    self.destination.put(query, dataset)
+        except Exception as error:
+            self.destination.closed(True)
+            raise error
+        self.destination.closed(True)
 
     @property
     def source(self): return self.__source
     @property
     def destination(self): return self.__destination
+    @abstractmethod
+    def execute(self, *args, **kwargs): pass
 
 
 class Consumer(Process, ABC, daemon=True):
     def __init__(self, *args, source, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(source, Queue)
+        assert isinstance(source, Cache)
         self.__source = source
 
     def process(self, *args, **kwargs):
-        while True:
-            query, dataset = self.source.get()
+        while bool(self.source.open):
+            try:
+                query, dataset = self.source.get()
+            except queue.Empty:
+                continue
             self.execute(query, dataset, *args, **kwargs)
 
     @property
     def source(self): return self.__source
+    @abstractmethod
+    def execute(self, *args, **kwargs): pass
 
 
 class Loader(File, Producer):

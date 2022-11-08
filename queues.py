@@ -56,8 +56,6 @@ class Queue(queue.Queue):
 
     @property
     def name(self): return self.__name
-    def get(self): return super().get()
-    def put(self, queueable): super().put(queueable)
 
 
 class Abandon(Event): pass

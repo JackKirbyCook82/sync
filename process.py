@@ -43,7 +43,6 @@ class TerminateProcess(ControlProcess): pass
 class Process(threading.Thread, ABC):
     def __init_subclass__(cls, *args, failure=None, failures=[], daemon=False, **kwargs):
         assert all([issubclass(exception, BaseException) for exception in _filter(_aslist(failure) + _aslist(failures), None)])
-        assert isinstance(daemon, bool)
         cls.failures = list(getattr(cls, "failures", []))
         cls.failures = tuple(_filter(cls.failures + _aslist(failure) + _aslist(failures), None))
         cls.daemon = daemon
@@ -51,8 +50,7 @@ class Process(threading.Thread, ABC):
     def __init__(self, *args, name=None, **kwargs):
         assert isinstance(name, str)
         name = name if name is not None else self.__class__.__name__
-        daemon = self.__class__.daemon
-        threading.Thread.__init__(self, name=name, daemon=daemon)
+        threading.Thread.__init__(self, name=name, daemon=self.__class__.daemon)
         self.__arguments = list()
         self.__parameters = dict()
         self.__alive = Status("Alive", False)
