@@ -22,7 +22,7 @@ from sync.queues import Queue
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Cache", "Producer", "ConsumerProducer", "Consumer", "Loader", "Saver"]
+__all__ = ["Cache", "Producer", "Consumer", "Loader", "Saver"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -49,7 +49,8 @@ class Cache(Queue):
     def __init__(self, *args, timeout=60, **kwargs):
         super().__init__(*args, **kwargs)
         self.__open = Status("Open", True)
-        self.__closed = self.__open.divergent("Closed")
+        self.__producing = Status("Producing", True)
+        self.__consuming = Status("Consuming", True)
         self.__timeout = int(timeout)
 
     def put(self, query, dataset):
@@ -78,16 +79,22 @@ class Producer(Process, ABC, daemon=False):
         assert isinstance(destination, Cache)
         self.__destination = destination
 
-    def process(self, *args, **kwargs):
-        try:
-            generator = self.execute(*args, **kwargs)
-            assert isinstance(generator, types.GeneratorType)
-            for query, dataset in iter(generator):
+    def generator(self, *args, **kwargs):
+        generator = self.execute(*args, **kwargs)
+        assert isinstance(generator, types.GeneratorType)
+        return generator
+
+    def receiver(self, generator, *args, **kwargs):
+        for query, dataset in iter(generator):
+            if bool(self.destination):
                 self.destination.put(query, dataset)
-        except Exception as error:
-            self.destination.closed(True)
-            raise error
-        self.destination.closed(True)
+            else:
+                break
+
+    def process(self, *args, **kwargs):
+        generator = self.generator(*args, **kwargs)
+        assert isinstance(generator, types.GeneratorType)
+        self.receiver(generator, *args, **kwargs)
 
     @property
     def destination(self): return self.__destination
@@ -95,54 +102,52 @@ class Producer(Process, ABC, daemon=False):
     def execute(self, *args, **kwargs): pass
 
 
-class ConsumerProducer(Process, ABC, daemon=False):
-    def __init__(self, *args, source, destination, **kwargs):
+class Consumer(Process, ABC, daemon=False):
+    def __new__(cls, *args, destination=None, **kwargs):
+        if destination is None:
+            cls.daemon = True
+
+    def __init__(self, *args, source, destination=None, **kwargs):
         super().__init__(*args, **kwargs)
         assert isinstance(source, Cache)
-        assert isinstance(destination, Cache)
+        assert isinstance(destination, (Cache, type(None)))
         self.__source = source
         self.__destination = destination
 
+    def generator(self, *args, **kwargs):
+        while bool(self.source.open):
+            try:
+                query, dataset = self.source.get()
+                yield query, dataset
+            except queue.Empty:
+                continue
+
+    @kwargsdispatcher("terminal")
+    def receiver(self, generator, *args, **kwargs): pass
+
+    @receiver.register.value(False)
+    def producer(self, generator, *args, **kwargs):
+        for query, dataset in iter(self.execute(generator, *args, **kwargs)):
+            if bool(self.destination.open):
+                self.destination.put(query, dataset)
+            else:
+                break
+
+    @receiver.register.value(True)
+    def consumer(self, generator, *args, **kwargs):
+        for query, dataset, in iter(generator):
+            self.execute(query, dataset, *args, **kwargs)
+
     def process(self, *args, **kwargs):
-        try:
-            while bool(self.source.open):
-                try:
-                    query, dataset = self.source.get()
-                except queue.Empty:
-                    continue
-                generator = self.execute(query, dataset, *args, **kwargs)
-                assert isinstance(generator, types.GeneratorType)
-                for query, dataset in iter(generator):
-                    self.destination.put(query, dataset)
-        except Exception as error:
-            self.destination.closed(True)
-            raise error
-        self.destination.closed(True)
+        generator = self.generator(*args, **kwargs)
+        terminal = self.destination is None
+        assert isinstance(generator, types.GeneratorType)
+        self.receiver(generator, *args, terminal=bool(terminal), **kwargs)
 
     @property
     def source(self): return self.__source
     @property
     def destination(self): return self.__destination
-    @abstractmethod
-    def execute(self, *args, **kwargs): pass
-
-
-class Consumer(Process, ABC, daemon=True):
-    def __init__(self, *args, source, **kwargs):
-        super().__init__(*args, **kwargs)
-        assert isinstance(source, Cache)
-        self.__source = source
-
-    def process(self, *args, **kwargs):
-        while bool(self.source.open):
-            try:
-                query, dataset = self.source.get()
-            except queue.Empty:
-                continue
-            self.execute(query, dataset, *args, **kwargs)
-
-    @property
-    def source(self): return self.__source
     @abstractmethod
     def execute(self, *args, **kwargs): pass
 
