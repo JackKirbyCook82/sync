@@ -51,6 +51,9 @@ class Producer(Process, ABC, daemon=False):
         name = kwargs.get("name", str(self.__class__.__name__) + "Queue")
         self.__queue = Queue([], name=name)
 
+    def __repr__(self): return "{}[{}]".format(self.name, len(self))
+    def __len__(self): return len(self.queue)
+
     def put(self, query, dataset):
         content = (query, dataset)
         self.queue.put(content)
