@@ -32,6 +32,7 @@ _filter = lambda items, by: [item for item in _aslist(items) if item is not by]
 
 class Process(threading.Thread, ABC):
     def __repr__(self): return "{}".format(self.name)
+    def __bool__(self): return self.is_alive()
 
     def __init_subclass__(cls, *args, failure=None, failures=[], daemon=False, **kwargs):
         assert all([issubclass(exception, BaseException) for exception in _filter(_aslist(failure) + _aslist(failures), None)])
@@ -58,10 +59,18 @@ class Process(threading.Thread, ABC):
         self.__parameters.update(dict(parameters))
         return self
 
-    def run(self):
+    def start(self):
         self.alive(True)
+        LOGGER.info("Started: {}".format(repr(self)))
+        super().start()
+
+    def join(self):
+        super().join()
+        LOGGER.info("Stopped: {}".format(repr(self)))
+        self.dead(True)
+
+    def run(self):
         try:
-            LOGGER.info("Started: {}".format(repr(self)))
             self.running(True)
             self.process(*self.__arguments, **self.__parameters)
         except self.__failures as failure:
@@ -75,9 +84,7 @@ class Process(threading.Thread, ABC):
         else:
             LOGGER.info("Completed: {}".format(repr(self)))
         finally:
-            LOGGER.info("Stopping: {}".format(repr(self)))
             self.idle(True)
-        self.dead(True)
 
     @property
     def failure(self): return self.__failure

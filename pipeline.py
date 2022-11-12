@@ -46,12 +46,15 @@ class File(object):
 
 
 class Producer(Process, ABC, daemon=False):
+    def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
+    def __len__(self): return len(self.queue)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         name = kwargs.get("name", str(self.__class__.__name__) + "Queue")
         self.__queue = Queue([], name=name)
 
-    def put(self, query, dataset):
+    def produce(self, query, dataset):
         content = (query, dataset)
         self.queue.put(content)
 
@@ -62,7 +65,7 @@ class Producer(Process, ABC, daemon=False):
         generator = self.generator(*args, **kwargs)
         assert isinstance(generator, types.GeneratorType)
         for putQuery, putDataset in iter(generator):
-            self.put(putQuery, putDataset)
+            self.produce(putQuery, putDataset)
             self.report(putQuery, putDataset)
 
     def join(self):
@@ -78,19 +81,22 @@ class Producer(Process, ABC, daemon=False):
 
 
 class Consumer(Process, ABC, daemon=True):
+    def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
+    def __len__(self): return len(self.queue)
+
     def __init__(self, *args, source, timeout=60, **kwargs):
         super().__init__(*args, **kwargs)
         name = kwargs.get("name", str(self.__class__.__name__) + "Queue")
         self.__queue = Queue([], name=name)
-        self.__source = source.queue
+        self.__source = source
         self.__timeout = int(timeout)
 
-    def get(self):
-        content = self.source.get(timeout=self.timeout)
+    def consume(self):
+        content = self.source.queue.get(timeout=self.timeout)
         query, dataset = content
         return query, dataset
 
-    def put(self, query, dataset):
+    def produce(self, query, dataset):
         content = (query, dataset)
         self.queue.put(content)
 
@@ -103,19 +109,20 @@ class Consumer(Process, ABC, daemon=True):
         yield
 
     def process(self, *args, **kwargs):
-        while True:
+        while bool(self.source) or bool(self.source.queue):
             try:
-                getQuery, getDataset = self.source.get()
+                getQuery, getDataset = self.consume()
                 generator = self.generator(getQuery, getDataset, *args, **kwargs)
                 for putQuery, putDataset in iter(generator):
-                    self.put(putQuery, putDataset)
+                    self.produce(putQuery, putDataset)
                     self.report(putQuery, putDataset)
-                self.source.task_done()
+                self.source.queue.task_done()
             except queue.Empty:
                 continue
 
     def join(self):
         super().join()
+        self.queue.join()
 
     @property
     def timeout(self): return self.__timeout
