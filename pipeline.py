@@ -9,7 +9,6 @@ Created on Mon Oct 31 2022
 import os.path
 import types
 import queue
-import inspect
 import logging
 import pandas as pd
 from abc import ABC, abstractmethod
@@ -22,7 +21,7 @@ from sync.queues import Queue
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Producer", "Consumer", "Loader", "Saver"]
+__all__ = ["Producer", "Pipeline", "Consumer", "Loader", "Saver"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -80,7 +79,7 @@ class Producer(Process, ABC, daemon=False):
     def report(query, dataset): pass
 
 
-class Consumer(Process, ABC, daemon=True):
+class Pipeline(Process, ABC, daemon=True):
     def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
     def __len__(self): return len(self.queue)
 
@@ -100,19 +99,11 @@ class Consumer(Process, ABC, daemon=True):
         content = (query, dataset)
         self.queue.put(content)
 
-    def generator(self, query, dataset, *args, **kwargs):
-        if bool(inspect.isgeneratorfunction(self.execute)):
-            yield from self.execute(query, dataset, *args, **kwargs)
-        else:
-            self.execute(query, dataset, *args, **kwargs)
-        return
-        yield
-
     def process(self, *args, **kwargs):
         while bool(self.source) or bool(self.source.queue):
             try:
                 getQuery, getDataset = self.consume()
-                generator = self.generator(getQuery, getDataset, *args, **kwargs)
+                generator = self.execute(getQuery, getDataset, *args, **kwargs)
                 for putQuery, putDataset in iter(generator):
                     self.produce(putQuery, putDataset)
                     self.report(putQuery, putDataset)
@@ -134,6 +125,40 @@ class Consumer(Process, ABC, daemon=True):
     def execute(self, *args, **kwargs): pass
     @staticmethod
     def report(query, dataset): pass
+
+
+class Consumer(Process, ABC, daemon=True):
+    def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
+    def __len__(self): return len(self.queue)
+
+    def __init__(self, *args, source, timeout=60, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__source = source
+        self.__timeout = int(timeout)
+
+    def consume(self):
+        content = self.source.queue.get(timeout=self.timeout)
+        query, dataset = content
+        return query, dataset
+
+    def process(self, *args, **kwargs):
+        while bool(self.source) or bool(self.source.queue):
+            try:
+                getQuery, getDataset = self.consume()
+                self.execute(getQuery, getDataset, *args, **kwargs)
+                self.source.queue.task_done()
+            except queue.Empty:
+                continue
+
+    def join(self):
+        super().join()
+
+    @property
+    def timeout(self): return self.__timeout
+    @property
+    def source(self): return self.__source
+    @abstractmethod
+    def execute(self, *args, **kwargs): pass
 
 
 class Loader(File, Producer):
