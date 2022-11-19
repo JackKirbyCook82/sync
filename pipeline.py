@@ -21,7 +21,7 @@ from sync.queues import Queue
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Producer", "Pipeline", "Consumer", "Loader", "Saver"]
+__all__ = ["Producer", "Pipeline", "Consumer", "Cache", "Loader", "Saver"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -44,109 +44,60 @@ class File(object):
     def parameters(filename, *args, **kwargs): return {}
 
 
-class Producer(Process, ABC, daemon=False):
-    def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
-    def __len__(self): return len(self.queue)
-
+class Cache(Queue):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        name = kwargs.get("name", str(self.__class__.__name__) + "Queue")
-        self.__queue = Queue([], name=name)
+        self.__feeds = []
 
-    def produce(self, query, dataset):
-        content = (query, dataset)
-        self.queue.put(content)
-
-    def generator(self, *args, **kwargs):
-        yield from self.execute(*args, **kwargs)
-
-    def process(self, *args, **kwargs):
-        generator = self.generator(*args, **kwargs)
-        assert isinstance(generator, types.GeneratorType)
-        for putQuery, putDataset in iter(generator):
-            self.produce(putQuery, putDataset)
-            self.report(putQuery, putDataset)
-
-    def join(self):
-        super().join()
-        self.queue.join()
+    def __bool__(self):
+        feeds = any([bool(feed) for feed in self.feeds])
+        return super().__bool__() or bool(feeds)
 
     @property
-    def queue(self): return self.__queue
-    @abstractmethod
-    def execute(self, *args, **kwargs): pass
-    @staticmethod
-    def report(query, dataset): pass
+    def feeds(self): return self.__feeds
+    def register(self, feed): self.__feeds.append(feed)
 
 
-class Pipeline(Process, ABC, daemon=True):
-    def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
-    def __len__(self): return len(self.queue)
-
-    def __init__(self, *args, source, timeout=60, **kwargs):
+class Producer(Process, ABC, daemon=False):
+    def __init__(self, *args, destination, **kwargs):
         super().__init__(*args, **kwargs)
-        name = kwargs.get("name", str(self.__class__.__name__) + "Queue")
-        self.__queue = Queue([], name=name)
-        self.__source = source
-        self.__timeout = int(timeout)
-
-    def consume(self):
-        content = self.source.queue.get(timeout=self.timeout)
-        query, dataset = content
-        return query, dataset
-
-    def produce(self, query, dataset):
-        content = (query, dataset)
-        self.queue.put(content)
+        assert isinstance(destination, Queue)
+        self.__destination = destination
+        destination.register(self)
 
     def process(self, *args, **kwargs):
-        while bool(self.source) or bool(self.source.queue):
-            try:
-                getQuery, getDataset = self.consume()
-                generator = self.execute(getQuery, getDataset, *args, **kwargs)
-                for putQuery, putDataset in iter(generator):
-                    self.produce(putQuery, putDataset)
-                    self.report(putQuery, putDataset)
-                self.source.queue.task_done()
-            except queue.Empty:
-                continue
+        generator = self.execute(*args, **kwargs)
+        assert isinstance(generator, types.GeneratorType)
+        for content in iter(generator):
+            self.destination.put(content)
+            self.report(content)
+
+    def report(self, content):
+        pass
 
     def join(self):
         super().join()
-        self.queue.join()
+        self.destination.join()
 
     @property
-    def timeout(self): return self.__timeout
-    @property
-    def source(self): return self.__source
-    @property
-    def queue(self): return self.__queue
+    def destination(self): return self.__destination
     @abstractmethod
     def execute(self, *args, **kwargs): pass
-    @staticmethod
-    def report(query, dataset): pass
 
 
 class Consumer(Process, ABC, daemon=True):
-    def __repr__(self): return "{}[{}]".format(self.name, len(self.queue))
-    def __len__(self): return len(self.queue)
-
     def __init__(self, *args, source, timeout=60, **kwargs):
         super().__init__(*args, **kwargs)
+        assert isinstance(source, Queue)
         self.__source = source
         self.__timeout = int(timeout)
 
-    def consume(self):
-        content = self.source.queue.get(timeout=self.timeout)
-        query, dataset = content
-        return query, dataset
-
     def process(self, *args, **kwargs):
-        while bool(self.source) or bool(self.source.queue):
+        while bool(self.source):
             try:
-                getQuery, getDataset = self.consume()
-                self.execute(getQuery, getDataset, *args, **kwargs)
-                self.source.queue.task_done()
+                content = self.source.get(timeout=self.timeout)
+                self.execute(content, *args, **kwargs)
+                self.source.task_done()
             except queue.Empty:
                 continue
 
@@ -157,6 +108,46 @@ class Consumer(Process, ABC, daemon=True):
     def timeout(self): return self.__timeout
     @property
     def source(self): return self.__source
+    @abstractmethod
+    def execute(self, *args, **kwargs): pass
+
+
+class Pipeline(Process, ABC, daemon=True):
+    def __init__(self, *args, source, destination, timeout=60, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert isinstance(source, Queue)
+        assert isinstance(destination, Queue)
+        self.__source = source
+        self.__destination = destination
+        self.__timeout = int(timeout)
+        destination.register(self)
+
+    def process(self, *args, **kwargs):
+        while bool(self.source):
+            try:
+                getContent = self.queue.get(timeout=self.timeout)
+                generator = self.execute(getContent, *args, **kwargs)
+                assert isinstance(generator, types.GeneratorType)
+                for putContent in iter(generator):
+                    self.destination.put(putContent)
+                    self.report(putContent)
+                self.source.task_done()
+            except queue.Empty:
+                continue
+
+    def report(self, content):
+        pass
+
+    def join(self):
+        super().join()
+        self.destination.join()
+
+    @property
+    def source(self): return self.__source
+    @property
+    def destination(self): return self.__destination
+    @property
+    def timeout(self): return self.__timeout
     @abstractmethod
     def execute(self, *args, **kwargs): pass
 
@@ -192,7 +183,8 @@ class Loader(File, Producer):
 
 
 class Saver(File, Consumer):
-    def execute(self, query, dataset, *args, **kwargs):
+    def execute(self, content, *args, **kwargs):
+        (query, dataset) = content
         for filename, filedata in iter(dataset):
             parms = self.parameters(filename, *args, **kwargs)
             file = self.save(filename, *args, data=filedata, **parms, **kwargs)
