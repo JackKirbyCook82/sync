@@ -125,7 +125,7 @@ class Pipeline(Process, ABC, daemon=True):
     def process(self, *args, **kwargs):
         while bool(self.source):
             try:
-                getContent = self.queue.get(timeout=self.timeout)
+                getContent = self.source.get(timeout=self.timeout)
                 generator = self.execute(getContent, *args, **kwargs)
                 assert isinstance(generator, types.GeneratorType)
                 for putContent in iter(generator):
