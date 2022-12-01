@@ -16,12 +16,12 @@ from abc import ABC, abstractmethod
 from files.dataframes import DataframeFile
 from utilities.dispatchers import kwargsdispatcher
 
-from sync.process import Process
+from sync.threads import Thread
 from sync.queues import Queue
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Producer", "Pipeline", "Consumer", "Cache", "Loader", "Saver"]
+__all__ = ["Producer", "Pipeline", "Process", "Consumer", "Cache", "Loader", "Saver"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -58,7 +58,7 @@ class Cache(Queue):
     def register(self, feed): self.__feeds.append(feed)
 
 
-class Producer(Process, ABC, daemon=False):
+class Producer(Thread, ABC, daemon=False):
     def __init__(self, *args, destination, **kwargs):
         super().__init__(*args, **kwargs)
         assert isinstance(destination, Queue)
@@ -70,10 +70,6 @@ class Producer(Process, ABC, daemon=False):
         assert isinstance(generator, types.GeneratorType)
         for content in iter(generator):
             self.destination.put(content)
-            self.report(content)
-
-    def report(self, content):
-        pass
 
     def join(self):
         super().join()
@@ -85,7 +81,7 @@ class Producer(Process, ABC, daemon=False):
     def execute(self, *args, **kwargs): pass
 
 
-class Consumer(Process, ABC, daemon=True):
+class Consumer(Thread, ABC, daemon=True):
     def __init__(self, *args, source, timeout=60, **kwargs):
         super().__init__(*args, **kwargs)
         assert isinstance(source, Queue)
@@ -112,7 +108,7 @@ class Consumer(Process, ABC, daemon=True):
     def execute(self, *args, **kwargs): pass
 
 
-class Pipeline(Process, ABC, daemon=True):
+class Operation(Thread, ABC, daemon=True):
     def __init__(self, *args, source, destination, timeout=60, **kwargs):
         super().__init__(*args, **kwargs)
         assert isinstance(source, Queue)
@@ -121,22 +117,6 @@ class Pipeline(Process, ABC, daemon=True):
         self.__destination = destination
         self.__timeout = int(timeout)
         destination.register(self)
-
-    def process(self, *args, **kwargs):
-        while bool(self.source):
-            try:
-                getContent = self.source.get(timeout=self.timeout)
-                generator = self.execute(getContent, *args, **kwargs)
-                assert isinstance(generator, types.GeneratorType)
-                for putContent in iter(generator):
-                    self.destination.put(putContent)
-                    self.report(putContent)
-                self.source.task_done()
-            except queue.Empty:
-                continue
-
-    def report(self, content):
-        pass
 
     def join(self):
         super().join()
@@ -148,8 +128,42 @@ class Pipeline(Process, ABC, daemon=True):
     def destination(self): return self.__destination
     @property
     def timeout(self): return self.__timeout
+
+
+class Pipeline(Operation, ABC):
+    def process(self, *args, **kwargs):
+        while bool(self.source):
+            try:
+                getContent = self.source.get(timeout=self.timeout)
+                generator = self.execute(getContent, *args, **kwargs)
+                assert isinstance(generator, types.GeneratorType)
+                for putContent in iter(generator):
+                    self.destination.put(putContent)
+                self.source.task_done()
+            except queue.Empty:
+                continue
+
     @abstractmethod
-    def execute(self, *args, **kwargs): pass
+    def execute(self, content, *args, **kwargs): pass
+
+
+class Process(Operation, ABC):
+    def process(self, *args, **kwargs):
+        while bool(self.source):
+            try:
+                getContent = self.source.get(timeout=self.timeout)
+                self.consume(getContent, *args, **kwargs)
+                self.sleep(self.timeout)
+                self.source.task_done()
+                putContent = self.produce(*args, **kwargs)
+                self.destination.put(putContent)
+            except queue.Empty:
+                continue
+
+    @abstractmethod
+    def consume(self, content, *args, **kwargs): pass
+    @abstractmethod
+    def produce(self, *args, **kwargs): pass
 
 
 class Loader(File, Producer):

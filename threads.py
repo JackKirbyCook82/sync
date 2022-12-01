@@ -17,7 +17,7 @@ from sync.status import Status
 
 __version__ = "1.0.0"
 __author__ = "Jack Kirby Cook"
-__all__ = ["Process"]
+__all__ = ["Thread"]
 __copyright__ = "Copyright 2020, Jack Kirby Cook"
 __license__ = ""
 
@@ -30,7 +30,7 @@ _astuple = lambda items: tuple(items) if isinstance(items, (tuple, list, set)) e
 _filter = lambda items, by: [item for item in _aslist(items) if item is not by]
 
 
-class Process(threading.Thread, ABC):
+class Thread(threading.Thread, ABC):
     def __repr__(self): return "{}".format(self.name)
     def __bool__(self): return self.is_alive()
 
