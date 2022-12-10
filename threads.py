@@ -34,23 +34,24 @@ class Thread(threading.Thread, ABC):
     def __repr__(self): return "{}".format(self.name)
     def __bool__(self): return self.is_alive()
 
-    def __init_subclass__(cls, *args, failure=None, failures=[], daemon=False, **kwargs):
-        assert all([issubclass(exception, BaseException) for exception in _filter(_aslist(failure) + _aslist(failures), None)])
-        cls.failures = list(getattr(cls, "failures", []))
-        cls.failures = tuple(_filter(cls.failures + _aslist(failure) + _aslist(failures), None))
-        cls.daemon = daemon
+    def __init_subclass__(cls, *args, daemon=False, **kwargs):
+        failures = list(getattr(cls, "__failures__", []))
+        failures += _filter([kwargs.get("failure", None)], None)
+        failures += kwargs.get("failures", [])
+        assert all([issubclass(exception, BaseException) for exception in failures])
+        cls.__failures__ = tuple(failures)
+        cls.__daemon__ = daemon
 
-    def __init__(self, *args, name=None, **kwargs):
-        assert isinstance(name, str)
-        name = name if name is not None else self.__class__.__name__
-        threading.Thread.__init__(self, name=name, daemon=self.__class__.daemon)
+    def __init__(self, *args, **kwargs):
+        name = kwargs.get("name", self.__class__.__name__)
+        threading.Thread.__init__(self, name=str(name), daemon=self.__class__.__daemon__)
         self.__arguments = list()
         self.__parameters = dict()
         self.__alive = Status("Alive", False)
         self.__dead = self.__alive.divergent("Dead")
         self.__running = Status("Running", False)
         self.__idle = self.__running.divergent("Idle")
-        self.__failures = tuple([exception for exception in self.__class__.failures])
+        self.__failures = tuple([exception for exception in self.__class__.__failures__])
         self.__failure = None
         self.__error = None
 

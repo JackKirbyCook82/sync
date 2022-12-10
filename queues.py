@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Nov 26 2021
-@name:   Synchronization Queue Objects
+@name:   Queue Objects
 @author: Jack Kirby Cook
 
 """
@@ -19,7 +19,7 @@ class Queue(queue.Queue):
     def __init__(self, *args, timeout=60, **kwargs):
         self.__name = kwargs.get("name", self.__class__.__name__)
         self.__timeout = int(timeout)
-        self.__sources = []
+        self.__sources = set()
         super().__init__()
 
     def __repr__(self): return "{}[{}]".format(self.name, str(len(self)))
@@ -38,6 +38,8 @@ class Queue(queue.Queue):
 
     @property
     def name(self): return self.__name
+    @property
+    def timeout(self): return self.__timeout
     @property
     def sources(self): return self.__sources
 
