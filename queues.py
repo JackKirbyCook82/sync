@@ -29,9 +29,9 @@ class Queue(queue.Queue):
         sources = any([bool(source) for source in self.sources])
         return not bool(self.empty()) or bool(sources)
 
-    def done(self): super().task_done()
-    def get(self): super().get(timeout=self.timeout)
+    def get(self): return super().get(timeout=self.timeout)
     def put(self, content): super().put(content)
+    def done(self): super().task_done()
 
     def register(self, source): self.sources.add(source)
     def unregister(self, source): self.sources.discard(source)
