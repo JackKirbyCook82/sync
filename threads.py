@@ -36,8 +36,8 @@ class Thread(threading.Thread, ABC):
 
     def __init_subclass__(cls, *args, daemon=False, **kwargs):
         failures = list(getattr(cls, "__failures__", []))
-        failures += _filter([kwargs.get("failure", None)], None)
-        failures += kwargs.get("failures", [])
+        update = [kwargs.get("failure", None)] + list(kwargs.get("failures", []))
+        failures = failures + update
         assert all([issubclass(exception, BaseException) for exception in failures])
         cls.__failures__ = tuple(failures)
         cls.__daemon__ = daemon
