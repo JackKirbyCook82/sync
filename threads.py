@@ -25,11 +25,6 @@ __license__ = ""
 LOGGER = logging.getLogger(__name__)
 
 
-_aslist = lambda items: list(items) if isinstance(items, (tuple, list, set)) else [items]
-_astuple = lambda items: tuple(items) if isinstance(items, (tuple, list, set)) else (items,)
-_filter = lambda items, by: [item for item in _aslist(items) if item is not by]
-
-
 class Thread(threading.Thread, ABC):
     def __repr__(self): return "{}".format(self.name)
     def __bool__(self): return self.is_alive()
@@ -37,7 +32,7 @@ class Thread(threading.Thread, ABC):
     def __init_subclass__(cls, *args, daemon=False, **kwargs):
         failures = list(getattr(cls, "__failures__", []))
         update = [kwargs.get("failure", None)] + list(kwargs.get("failures", []))
-        failures = failures + update
+        failures = filter(None, failures + update)
         assert all([issubclass(exception, BaseException) for exception in failures])
         cls.__failures__ = tuple(failures)
         cls.__daemon__ = daemon
