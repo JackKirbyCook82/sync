@@ -42,8 +42,6 @@ class Thread(threading.Thread, ABC):
         threading.Thread.__init__(self, name=str(name), daemon=self.__class__.__daemon__)
         self.__arguments = list()
         self.__parameters = dict()
-        self.__alive = Status("Alive", False)
-        self.__dead = self.__alive.divergent("Dead")
         self.__running = Status("Running", False)
         self.__idle = self.__running.divergent("Idle")
         self.__failures = tuple([exception for exception in self.__class__.__failures__])
@@ -56,18 +54,15 @@ class Thread(threading.Thread, ABC):
         return self
 
     def start(self):
-        self.alive(True)
         LOGGER.info("Started: {}".format(repr(self)))
         super().start()
 
     def join(self):
         super().join()
         LOGGER.info("Stopped: {}".format(repr(self)))
-        self.dead(True)
 
     def run(self):
         try:
-            self.running(True)
             self.process(*self.__arguments, **self.__parameters)
         except self.__failures as failure:
             LOGGER.warning("Failure: {}|{}".format(repr(self), failure.__class__.__name__))
@@ -79,21 +74,11 @@ class Thread(threading.Thread, ABC):
             self.__error = error
         else:
             LOGGER.info("Completed: {}".format(repr(self)))
-        finally:
-            self.idle(True)
 
     @property
     def failure(self): return self.__failure
     @property
     def error(self): return self.__error
-    @property
-    def alive(self): return self.__alive
-    @property
-    def dead(self): return self.__dead
-    @property
-    def running(self): return self.__running
-    @property
-    def idle(self): return self.__idle
 
     @staticmethod
     def sleep(seconds): sleeper(seconds)
