@@ -17,7 +17,6 @@ __license__ = ""
 
 class Query(tuple):
     def __init_subclass__(cls, *args, fields=[], **kwargs):
-        assert list(cls.__mro__)[list(cls.__mro__).index(cls) + 1] in (Query, tuple, object)
         cls.fields = tuple([*getattr(cls, "fields", tuple()), *fields])
 
     def __new__(cls, contents, *args, **kwargs):
@@ -62,6 +61,8 @@ class DatasetMeta(type):
             cls.__fields__ = {}
             cls.__reductions__ = {}
             return
+        if "fields" not in kwargs.keys():
+            return
         assert isinstance(kwargs["fields"], (list, dict))
         fields = kwargs["fields"] if isinstance(kwargs["fields"], dict) else {field: kwargs["type"] for field in kwargs["fields"]}
         cls.__fields__ = {key: value for key, value in cls.__fields__.items()}
@@ -80,10 +81,12 @@ class DatasetMeta(type):
         instance = super(DatasetMeta, cls).__call__(collections, *args, fields=cls.__fields__, reductions=cls.__reductions__, **kwargs)
         return instance
 
+    def create(cls, *args, **kwargs):
+        return type(cls)(cls.__name__, (cls,), {}, *args, **kwargs)
+
 
 class Dataset(ODict, metaclass=DatasetMeta):
-    def __init_subclass__(cls, *args, **kwargs):
-        assert list(cls.__mro__)[list(cls.__mro__).index(cls) + 1] in (Dataset, ODict, object)
+    def __init_subclass__(cls, *args, **kwargs): pass
 
     def __init__(self, collections, *args, name=None, reductions, fields, **kwargs):
         assert all([isinstance(collection, Collection) for collection in collections.values()])
