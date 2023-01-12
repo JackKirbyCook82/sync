@@ -95,8 +95,8 @@ class Dataset(ODict, metaclass=DatasetMeta):
         self.__fields = fields
         super().__init__(collections)
 
-    def __repr__(self): return "{}[{}]".format(self.name, ", ".join(["=".join([key, value.__name__]) for key, value in self.fields()]))
-    def __str__(self): return "{}: {}".format(self.name, ", ".join(["{}[{:.0f}]".format(key, int(value)) for key, value in zip(self.keys(), self.sizes()) if bool(value)]))
+    def __repr__(self): return "{}[{}]".format(self.name, ", ".join(["=".join([str(key), str(value.__name__)]) for key, value in self.fields()]))
+    def __str__(self): return "{}: {}".format(self.name, ", ".join(["{}[{:.0f}]".format(str(key), int(value)) for key, value in zip(self.keys(), self.sizes()) if bool(value)]))
     def __bool__(self): return any([bool(collection) for collection in super().values()])
 
     def __iter__(self): return ((key, self.reductions[key](collection)) for key, collection in super().items() if bool(collection))
@@ -137,8 +137,8 @@ class Results(dict):
         super().__init__(contents)
         self.__name = name
 
-    def __repr__(self): return "{}[{}]".format(self.name, ", ".join(["=".join([key, str(value)]) for key, value in self.items() if value > 0]))
-    def __str__(self): return "{}: {}".format(self.name, ", ".join(["=".join([key, str(value)]) for key, value in self.items() if value > 0]))
+    def __repr__(self): return "{}[{}]".format(self.name, ", ".join(["=".join([str(key), str(value)]) for key, value in self.items() if value > 0]))
+    def __str__(self): return "{}: {}".format(self.name, ", ".join(["=".join([str(key), str(value)]) for key, value in self.items() if value > 0]))
 
     def __add__(self, other):
         assert isinstance(other, type(self))
